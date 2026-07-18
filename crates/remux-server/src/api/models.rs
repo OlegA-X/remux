@@ -216,6 +216,18 @@ pub fn db_user_to_dto(data_dir: &std::path::Path, user: db::User) -> UserDto {
         configuration: Some(config),
         policy,
         primary_image_tag,
+        last_login_date: user
+            .last_login_at
+            .and_then(|s| {
+                s.parse()
+                    .ok()
+            }),
+        last_activity_date: user
+            .last_activity_at
+            .and_then(|s| {
+                s.parse()
+                    .ok()
+            }),
         ..Default::default()
     }
 }

@@ -595,15 +595,107 @@ pub async fn get_branding_css_dotcss(
 }
 
 /// Get activity log entries
+#[query]
+#[derive(Debug, Default)]
+pub struct ActivityLogQuery {
+    #[serde(default)]
+    pub start_index: Option<u32>,
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// RFC3339 — only entries at or after this date.
+    #[serde(default)]
+    pub min_date: Option<String>,
+    /// Optional: filter to events for a specific user.
+    #[serde(default, alias = "userId")]
+    pub user_id: Option<Uuid>,
+    /// Optional: only entries with a non-null user_id (admin dashboard).
+    #[serde(default)]
+    pub has_user_id: Option<bool>,
+}
+
 #[get("/system/activitylog/entries")]
 pub async fn system_activity_log(
     State(state): State<AppState>,
     _session: auth::AdminSession,
+    Query(q): Query<ActivityLogQuery>,
 ) -> Result<impl IntoResponse> {
-    // Return an empty activity log
+    let limit = q
+        .limit
+        .unwrap_or(100)
+        .min(500);
+    let offset = q
+        .start_index
+        .unwrap_or(0);
+
+    let user_id = if q
+        .has_user_id
+        .unwrap_or(false)
+    {
+        None
+    } else {
+        q.user_id
+    };
+
+    let result = db::ActivityLog::get_by_filter(
+        &state
+            .ctx
+            .db,
+        &db::ActivityLogFilter {
+            user_id,
+            since: q.min_date,
+            limit: Some(limit),
+            offset: Some(offset),
+            total_count: true,
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let items: Vec<api::ActivityLogEntryDto> = result
+        .records
+        .into_iter()
+        .map(|row| api::ActivityLogEntryDto {
+            id: row.id,
+            name: row.name,
+            overview: None,
+            short_overview: row.short_overview,
+            type_: row.log_type,
+            user_id: row.user_id,
+            user_primary_image_tag: row
+                .user_id
+                .filter(|id| {
+                    crate::api::users::user_has_avatar(
+                        &state
+                            .ctx
+                            .config
+                            .data_dir,
+                        id,
+                    )
+                })
+                .map(|id| id.to_string()),
+            severity: row
+                .severity
+                .clone(),
+            date: row
+                .date
+                .parse()
+                .unwrap_or_else(|_| chrono::Utc::now()),
+            log_severity: row.severity,
+            row_id: Some(row.id),
+            item_id: None,
+            // remux-only: extra context not in the Jellyfin shape.
+            remux: Some(api::ActivityLogEntryRemux {
+                ip_address: row.ip_address,
+                device_id: row.device_id,
+                client: row.client,
+            }),
+        })
+        .collect();
+
     Ok(Json(json!({
-        "Items": [],
-        "TotalRecordCount": 0
+        "Items": items,
+        "TotalRecordCount": result.total_count,
+        "StartIndex": offset
     })))
 }
 

@@ -230,7 +230,9 @@ impl Device {
     }
 
     /// Update last_activity_at to now and refresh runtime-identifying fields
-    /// (device name/client/version) when present.
+    /// (device name/client/version) when present. Also bumps the owning user's
+    /// `last_activity_at` column so per-user activity stats stay current without
+    /// an extra round trip.
     pub async fn touch(&self, db: &SqlitePool, remote_ip: Option<&str>) -> Result<()> {
         sqlx::query(
             "UPDATE devices SET last_activity_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), \
@@ -245,6 +247,12 @@ impl Device {
         .bind(&self.app_name)
         .bind(&self.app_version)
         .bind(&self.id)
+        .bind(self.user_id)
+        .execute(db)
+        .await?;
+        sqlx::query(
+            "UPDATE users SET last_activity_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
+        )
         .bind(self.user_id)
         .execute(db)
         .await?;

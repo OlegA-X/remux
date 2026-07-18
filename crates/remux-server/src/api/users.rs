@@ -297,6 +297,35 @@ pub async fn users_authenticatebyname(
         )
         .await?;
 
+    // Persist login + activity timestamps for this user.
+    let _ = db::User::touch_login(
+        &state
+            .ctx
+            .db,
+        &user.id,
+    )
+    .await;
+    let _ = db::User::touch_activity(
+        &state
+            .ctx
+            .db,
+        &user.id,
+    )
+    .await;
+    let _ = db::ActivityLog::record(
+        &state
+            .ctx
+            .db,
+        &db::ActivityLogEntry {
+            log_type: "SessionStarted".into(),
+            name: format!("Authentication succeeded for {}", user.username),
+            short_overview: Some("Password".into()),
+            user_id: Some(user.id),
+            ..Default::default()
+        },
+    )
+    .await;
+
     Ok(build_auth_response(
         &state
             .ctx
@@ -363,6 +392,35 @@ pub async fn authenticate_with_quickconnect(
                 .db,
         )
         .await?;
+
+    // Persist login + activity timestamps for this user.
+    let _ = db::User::touch_login(
+        &state
+            .ctx
+            .db,
+        &user.id,
+    )
+    .await;
+    let _ = db::User::touch_activity(
+        &state
+            .ctx
+            .db,
+        &user.id,
+    )
+    .await;
+    let _ = db::ActivityLog::record(
+        &state
+            .ctx
+            .db,
+        &db::ActivityLogEntry {
+            log_type: "SessionStarted".into(),
+            name: format!("Authentication succeeded for {}", user.username),
+            short_overview: Some("QuickConnect".into()),
+            user_id: Some(user.id),
+            ..Default::default()
+        },
+    )
+    .await;
 
     // clean up store entries
     state
@@ -597,6 +655,26 @@ pub async fn create_user(
         .ctx
         .ws_tx
         .send(WsEvent::UserUpdated(user.id));
+    let _ = db::ActivityLog::record(
+        &state
+            .ctx
+            .db,
+        &db::ActivityLogEntry {
+            log_type: "UserCreated".into(),
+            name: format!("User {} created", user.username),
+            short_overview: Some(
+                user.username
+                    .clone(),
+            ),
+            user_id: Some(
+                session
+                    .user
+                    .id,
+            ),
+            ..Default::default()
+        },
+    )
+    .await;
     Ok((
         StatusCode::OK,
         Json(api::db_user_to_dto(
@@ -635,6 +713,23 @@ pub async fn delete_user(
         .ctx
         .ws_tx
         .send(WsEvent::UserDeleted(user_id));
+    let _ = db::ActivityLog::record(
+        &state
+            .ctx
+            .db,
+        &db::ActivityLogEntry {
+            log_type: "UserDeleted".into(),
+            name: format!("User {} deleted", user_id),
+            short_overview: None,
+            user_id: Some(
+                session
+                    .user
+                    .id,
+            ),
+            ..Default::default()
+        },
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -689,6 +784,23 @@ pub async fn change_password(
         .ctx
         .ws_tx
         .send(WsEvent::UserUpdated(user_id));
+    let _ = db::ActivityLog::record(
+        &state
+            .ctx
+            .db,
+        &db::ActivityLogEntry {
+            log_type: "UserPasswordChanged".into(),
+            name: format!("Password changed for {}", user.username),
+            short_overview: None,
+            user_id: Some(
+                session
+                    .user
+                    .id,
+            ),
+            ..Default::default()
+        },
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -719,6 +831,23 @@ pub async fn update_user_policy(
         .ctx
         .ws_tx
         .send(WsEvent::UserUpdated(user_id));
+    let _ = db::ActivityLog::record(
+        &state
+            .ctx
+            .db,
+        &db::ActivityLogEntry {
+            log_type: "UserPolicyUpdated".into(),
+            name: format!("Policy updated for {}", user.username),
+            short_overview: None,
+            user_id: Some(
+                session
+                    .user
+                    .id,
+            ),
+            ..Default::default()
+        },
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -755,6 +884,23 @@ pub async fn update_user(
         .ctx
         .ws_tx
         .send(WsEvent::UserUpdated(user_id));
+    let _ = db::ActivityLog::record(
+        &state
+            .ctx
+            .db,
+        &db::ActivityLogEntry {
+            log_type: "UserUpdated".into(),
+            name: format!("User {} updated", user.username),
+            short_overview: None,
+            user_id: Some(
+                session
+                    .user
+                    .id,
+            ),
+            ..Default::default()
+        },
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -1325,6 +1471,70 @@ pub async fn get_password_reset_providers(
     _session: auth::AuthSession,
 ) -> Result<impl IntoResponse> {
     Ok(Json(Vec::<serde_json::Value>::new()))
+}
+
+// ── remux user-statistics extensions ─────────────────────────────────────────
+//
+// These are additive, remux-namespaced endpoints (lowercase per AGENTS.md).
+// They surface per-user and dashboard-wide aggregates derived from
+// `user_media_state`, `devices`, and the activity timestamps on `users`.
+
+#[get("/remux/users/stats")]
+pub async fn remux_users_overview_stats(
+    State(state): State<AppState>,
+    _session: auth::AdminSession,
+) -> Result<impl IntoResponse> {
+    let stats = crate::services::UserService::overview(
+        &state
+            .ctx
+            .db,
+        5,
+    )
+    .await?;
+    Ok(Json(stats))
+}
+
+#[derive(Deserialize)]
+struct UserStatsQuery {
+    /// How many recently-played items to include (default 10, max 50).
+    #[serde(default = "default_recent_limit")]
+    recent: u32,
+}
+
+fn default_recent_limit() -> u32 {
+    10
+}
+
+#[get("/remux/users/{user_id}/stats")]
+pub async fn remux_user_stats(
+    State(state): State<AppState>,
+    session: auth::AuthSession,
+    Path(user_id): Path<Uuid>,
+    Query(q): Query<UserStatsQuery>,
+) -> Result<impl IntoResponse> {
+    // Self or admin only — same rule as the rest of the user read paths.
+    require_self_or_admin(user_id, &session)?;
+    let stats = crate::services::UserService::user_stats(
+        &state
+            .ctx
+            .db,
+        &user_id,
+    )
+    .await?;
+    let recent = crate::services::UserService::recent_items(
+        &state
+            .ctx
+            .db,
+        &user_id,
+        q.recent
+            .min(50),
+    )
+    .await?;
+
+    Ok(Json(serde_json::json!({
+        "Stats": stats,
+        "Recent": recent
+    })))
 }
 
 #[cfg(test)]
@@ -2856,6 +3066,124 @@ mod e2e_tests {
             series_record.unplayed_item_count,
             Some(0),
             "null-date episode must not be counted as unplayed when the release-date filter is active"
+        );
+    }
+
+    /// `GET /remux/users/stats` must return a populated overview after login.
+    #[tokio::test]
+    async fn test_remux_users_overview_stats() {
+        let (server, _ctx, token) = authenticated_server().await;
+        let auth = auth_header_with_token(&token);
+
+        let resp = server
+            .get("/remux/users/stats")
+            .add_header(
+                http::header::AUTHORIZATION,
+                HeaderValue::from_str(&auth).unwrap(),
+            )
+            .await;
+
+        resp.assert_status_ok();
+        let body: serde_json::Value = resp.json();
+        assert!(
+            body["TotalUsers"]
+                .as_i64()
+                .unwrap_or(0)
+                >= 1,
+            "at least the seeded admin user must be counted"
+        );
+        assert!(body["TopUsers"].is_array());
+    }
+
+    /// `GET /remux/users/{id}/stats` must return per-user stats for the
+    /// authenticated user (self access).
+    #[tokio::test]
+    async fn test_remux_user_stats_self() {
+        let (server, _ctx, token) = authenticated_server().await;
+        let auth = auth_header_with_token(&token);
+
+        let me: serde_json::Value = server
+            .get("/users/me")
+            .add_header(
+                http::header::AUTHORIZATION,
+                HeaderValue::from_str(&auth).unwrap(),
+            )
+            .await
+            .json();
+        let user_id = me["Id"]
+            .as_str()
+            .unwrap();
+
+        let resp = server
+            .get(&format!("/remux/users/{user_id}/stats"))
+            .add_header(
+                http::header::AUTHORIZATION,
+                HeaderValue::from_str(&auth).unwrap(),
+            )
+            .await;
+
+        resp.assert_status_ok();
+        let body: serde_json::Value = resp.json();
+        assert_eq!(body["Stats"]["Username"], "test");
+        assert!(body["Recent"].is_array());
+    }
+
+    /// A successful login must be recorded in the activity log.
+    #[tokio::test]
+    async fn test_activity_log_records_login() {
+        let (server, _ctx, token) = authenticated_server().await;
+        let auth = auth_header_with_token(&token);
+
+        let resp = server
+            .get("/system/activitylog/entries")
+            .add_header(
+                http::header::AUTHORIZATION,
+                HeaderValue::from_str(&auth).unwrap(),
+            )
+            .await;
+
+        resp.assert_status_ok();
+        let body: serde_json::Value = resp.json();
+        let items = body["Items"]
+            .as_array()
+            .expect("Items must be an array");
+        assert!(
+            !items.is_empty(),
+            "activity log must contain at least the login event"
+        );
+        assert!(
+            items
+                .iter()
+                .any(|i| i["Type"] == "SessionStarted"),
+            "a SessionStarted entry must be present"
+        );
+    }
+
+    /// Login must persist `last_login_at` so it surfaces in `/users` listings.
+    #[tokio::test]
+    async fn test_login_persists_last_login_date() {
+        let (server, _ctx, token) = authenticated_server().await;
+        let auth = auth_header_with_token(&token);
+
+        let resp = server
+            .get("/users")
+            .add_header(
+                http::header::AUTHORIZATION,
+                HeaderValue::from_str(&auth).unwrap(),
+            )
+            .await;
+
+        resp.assert_status_ok();
+        let users: serde_json::Value = resp.json();
+        let test_user = users
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|u| u["Name"] == "test")
+            .expect("seeded user present");
+        assert!(
+            test_user["LastLoginDate"].is_string(),
+            "LastLoginDate must be populated after login"
         );
     }
 }

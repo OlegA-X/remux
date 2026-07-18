@@ -58,6 +58,10 @@ pub struct User {
     pub configuration: Option<sqlx::types::Json<crate::api::UserConfiguration>>,
     pub is_admin: bool,
     pub policy: Option<sqlx::types::Json<crate::api::UserPolicy>>,
+    /// RFC3339 UTC timestamp of the last successful authentication.
+    pub last_login_at: Option<String>,
+    /// RFC3339 UTC timestamp of the most recent device activity (any session).
+    pub last_activity_at: Option<String>,
 }
 
 #[derive(Debug, Clone, default2::Default, Serialize, Deserialize, sqlx::FromRow)]
@@ -289,6 +293,28 @@ impl User {
                 .policy
                 .as_deref()
                 .map_or(false, |p| p.enable_remote_control_of_other_users)
+    }
+
+    /// Stamp `last_login_at` to now (RFC3339 UTC). Called on successful auth.
+    pub async fn touch_login(db: &SqlitePool, id: &Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE users SET last_login_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
+        )
+        .bind(id)
+        .execute(db)
+        .await?;
+        Ok(())
+    }
+
+    /// Stamp `last_activity_at` to now (RFC3339 UTC). Called on session activity.
+    pub async fn touch_activity(db: &SqlitePool, id: &Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE users SET last_activity_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
+        )
+        .bind(id)
+        .execute(db)
+        .await?;
+        Ok(())
     }
 
     pub async fn get_media_state(
