@@ -2456,6 +2456,102 @@ pub struct UpdateUserPassword {
     pub reset_password: Option<bool>,
 }
 
+/// Remux-only extra context attached to an [`ActivityLogEntryDto`].
+/// Custom fields live under a `remux` namespace per the project's
+/// additive-extension rules.
+#[dto]
+pub struct ActivityLogEntryRemux {
+    pub ip_address: Option<String>,
+    pub device_id: Option<String>,
+    pub client: Option<String>,
+}
+
+/// Jellyfin-shaped activity log entry. `remux` carries additive context.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct ActivityLogEntryDto {
+    pub id: i64,
+    pub name: String,
+    pub overview: Option<String>,
+    pub short_overview: Option<String>,
+    #[serde(rename = "Type")]
+    pub type_: String,
+    pub user_id: Option<Uuid>,
+    pub user_primary_image_tag: Option<String>,
+    pub severity: String,
+    pub date: DateTime<Utc>,
+    pub log_severity: String,
+    pub row_id: Option<i64>,
+    pub item_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remux: Option<ActivityLogEntryRemux>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ActivityLogQueryResult {
+    pub items: Vec<ActivityLogEntryDto>,
+    pub total_record_count: usize,
+    pub start_index: u32,
+}
+
+// ── remux user-statistics DTOs (dashboard + per-user) ────────────────────────
+
+#[dto]
+pub struct UserStats {
+    pub user_id: Uuid,
+    pub username: String,
+    pub is_admin: bool,
+    pub is_disabled: bool,
+    pub total_plays: i64,
+    pub played_items: i64,
+    pub favorite_items: i64,
+    pub resume_items: i64,
+    pub watch_time_seconds: i64,
+    pub last_played_at: Option<DateTime<Utc>>,
+    pub last_login_at: Option<DateTime<Utc>>,
+    pub last_activity_at: Option<DateTime<Utc>>,
+    pub active_device_count: i64,
+}
+
+#[dto]
+pub struct UserRecentItem {
+    pub media_id: Uuid,
+    pub title: Option<String>,
+    pub kind: Option<String>,
+    pub play_count: i64,
+    pub playback_position: i64,
+    pub favorite: bool,
+    pub last_played_at: Option<DateTime<Utc>>,
+}
+
+#[dto]
+pub struct TopUserStat {
+    pub user_id: Uuid,
+    pub username: String,
+    pub total_plays: i64,
+    pub last_activity_at: Option<DateTime<Utc>>,
+}
+
+#[dto]
+pub struct UsersOverviewStats {
+    pub total_users: i64,
+    pub admin_users: i64,
+    pub disabled_users: i64,
+    pub active_24h: i64,
+    pub active_7d: i64,
+    pub total_plays: i64,
+    pub top_users: Vec<TopUserStat>,
+}
+
+/// Envelope returned by `/remux/users/{id}/stats`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct UserStatsResponse {
+    pub stats: UserStats,
+    pub recent: Vec<UserRecentItem>,
+}
+
 #[dto]
 pub struct MediaStream {
     pub aspect_ratio: Option<String>,
@@ -5000,6 +5096,70 @@ impl Endpoint for AdminSetPassword {
     }
     fn body(&self) -> Body {
         Body::Json(serde_json::json!({ "NewPw": self.new_pw }))
+    }
+}
+
+// ── remux user-statistics operations ─────────────────────────────────────────
+
+#[derive(Debug, Clone, Default)]
+pub struct GetUsersOverviewStats;
+
+impl Endpoint for GetUsersOverviewStats {
+    type Output = UsersOverviewStats;
+    fn path(&self) -> String {
+        "/remux/users/stats".into()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GetUserStats {
+    pub user_id: Uuid,
+    /// How many recently-played items to include (default 10).
+    pub recent: Option<u32>,
+}
+
+impl Endpoint for GetUserStats {
+    type Output = UserStatsResponse;
+    fn path(&self) -> String {
+        format!("/remux/users/{}/stats", self.user_id)
+    }
+    fn query_params(&self) -> impl serde::Serialize + '_ {
+        &self.recent
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct GetActivityLogEntries {
+    #[serde(
+        rename = "startIndex",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub start_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    /// RFC3339 — only entries at or after this date.
+    #[serde(rename = "minDate", default, skip_serializing_if = "Option::is_none")]
+    pub min_date: Option<String>,
+    #[serde(rename = "userId", default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct ActivityLogResult {
+    pub items: Vec<ActivityLogEntryDto>,
+    pub total_record_count: usize,
+    pub start_index: u32,
+}
+
+impl Endpoint for GetActivityLogEntries {
+    type Output = ActivityLogResult;
+    fn path(&self) -> String {
+        "/system/activitylog/entries".into()
+    }
+    fn query_params(&self) -> impl serde::Serialize + '_ {
+        self
     }
 }
 
