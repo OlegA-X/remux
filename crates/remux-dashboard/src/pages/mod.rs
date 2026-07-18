@@ -19,4 +19,4 @@ pub use settings::{
     ProbeSettingsCard, RemuxdbSettingsCard, SearchSettingsCard, ServerSettingsCard,
 };
 pub use streams::StreamGroupsCard;
-pub use users::UsersPage;
+pub use users::{UserDetailPage, UsersPage};

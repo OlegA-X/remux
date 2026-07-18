@@ -1,10 +1,11 @@
 use crate::{
-    components::{SessionsCard, TasksCard},
+    components::{ActivityLogCard, SessionsCard, TasksCard},
     layout::DashboardLayout,
     pages::*,
     state::AppState,
 };
 use dioxus::prelude::*;
+use uuid::Uuid;
 
 #[derive(Clone, Routable, PartialEq, Debug)]
 pub enum Route {
@@ -39,6 +40,8 @@ pub enum Route {
     SettingsBrandingRoute,
     #[route("/access/users")]
     AccessUsersRoute,
+    #[route("/access/users/:id")]
+    AccessUserDetailRoute { id: Uuid },
     #[route("/access/apikeys")]
     AccessApiKeysRoute,
     #[route("/tasks")]
@@ -141,6 +144,12 @@ pub(crate) fn AccessUsersRoute() -> Element {
 }
 
 #[component]
+pub(crate) fn AccessUserDetailRoute(id: Uuid) -> Element {
+    let app_state = use_context::<AppState>();
+    rsx! { UserDetailPage { app_state, user_id: id } }
+}
+
+#[component]
 pub(crate) fn AccessApiKeysRoute() -> Element {
     let app_state = use_context::<AppState>();
     rsx! { ApiKeysPage { app_state } }
@@ -155,7 +164,10 @@ pub(crate) fn TasksRoute() -> Element {
 #[component]
 pub(crate) fn ActivityRoute() -> Element {
     let app_state = use_context::<AppState>();
-    rsx! { SessionsCard { app_state } }
+    rsx! {
+        ActivityLogCard { app_state: app_state.clone() }
+        SessionsCard { app_state }
+    }
 }
 
 #[component]

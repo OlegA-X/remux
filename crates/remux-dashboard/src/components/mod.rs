@@ -1,3 +1,4 @@
+pub mod activity_log;
 pub mod button;
 pub mod card;
 pub mod filters;
@@ -8,7 +9,9 @@ pub mod server_info;
 pub mod sessions;
 pub mod states;
 pub mod tasks;
+pub mod users_overview;
 
+pub use activity_log::ActivityLogCard;
 pub use button::{Button, ButtonVariant};
 pub use card::Card;
 pub use filters::{FilterRuleEditor, TagChipInput};
@@ -19,3 +22,4 @@ pub use server_info::{MediaStatsCard, ServerInfoCard};
 pub use sessions::SessionsCard;
 pub use states::{EmptyState, ErrorAlert, LoadingText, SuccessAlert};
 pub use tasks::TasksCard;
+pub use users_overview::UsersOverviewCard;

@@ -112,6 +112,7 @@ pub fn DashboardLayout() -> Element {
         Route::SettingsIntroRoute => "Intro",
         Route::SettingsRemuxdbRoute => "Remuxdb",
         Route::AccessUsersRoute => "Users",
+        Route::AccessUserDetailRoute { .. } => "User",
         Route::AccessApiKeysRoute => "API Keys",
         Route::TasksRoute => "Tasks",
         Route::ActivityRoute => "Activity",
